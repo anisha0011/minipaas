@@ -1,0 +1,41 @@
+services:
+  backend:
+    build:
+      context: ./apps/backend
+      dockerfile: Dockerfile
+    container_name: minipaas-backend
+    ports:
+      - "5000:5000"
+    environment:
+      - PORT=5000
+      - NODE_ENV=production
+      - MONGODB_URI=${MONGODB_URI}
+    networks:
+      - minipaas-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:5000/health').then(r => r.ok ? process.exit(0) : process.exit(1)).catch(() => process.exit(1))"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
+
+  frontend:
+    build:
+      context: ./apps/frontend
+      dockerfile: Dockerfile
+      args:
+        - VITE_API_URL=http://localhost:5000
+    container_name: minipaas-frontend
+    ports:
+      - "3000:80"
+    networks:
+      - minipaas-net
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+
+networks:
+  minipaas-net:
+    driver: bridge
