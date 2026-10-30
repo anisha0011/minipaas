@@ -1,0 +1,58 @@
+name: Deploy Application
+
+on:
+  workflow_dispatch:
+    inputs:
+      deploymentId:
+        description: 'Deployment ID'
+        required: true
+      applicationId:
+        description: 'Application ID'
+        required: true
+      repositoryUrl:
+        description: 'Repository URL'
+        required: true
+      branch:
+        description: 'Branch'
+        required: true
+
+jobs:
+  deploy:
+    runs-on: [self-hosted, Windows, X64, minipaas]
+    steps:
+      - name: Debug Environment
+        shell: powershell
+        run: |
+          Write-Host "Deployment ID: ${{ github.event.inputs.deploymentId }}"
+          Write-Host "Backend URL: ${{ secrets.BACKEND_URL }}"
+          Test-NetConnection -ComputerName localhost -Port 5000
+
+      - name: Report Status - Building
+        shell: powershell
+        run: |
+          Invoke-RestMethod -Uri "${{ secrets.BACKEND_URL }}/api/internal/deployments/${{ github.event.inputs.deploymentId }}/status" -Method Patch -Headers @{Authorization="Bearer ${{ secrets.MINIPAAS_WORKER_TOKEN }}"} -Body (@{status="building"} | ConvertTo-Json) -ContentType "application/json"
+
+      - name: Checkout Source
+        shell: powershell
+        run: |
+          if (Test-Path deployment_source) { Remove-Item -Recurse -Force deployment_source }
+          git clone -b ${{ github.event.inputs.branch }} ${{ github.event.inputs.repositoryUrl }} deployment_source
+
+      - name: Build Docker Image
+        shell: powershell
+        run: |
+          cd deployment_source
+          docker build -t minipaas-${{ github.event.inputs.applicationId }}:${{ github.event.inputs.deploymentId }} .
+
+      - name: Run Container
+        shell: powershell
+        run: |
+          $containerName = "app-${{ github.event.inputs.applicationId }}"
+          $existing = docker ps -q -f name=$containerName
+          if ($existing) { docker stop $existing; docker rm $existing }
+          docker run -d --name $containerName -p 8080:80 minipaas-${{ github.event.inputs.applicationId }}:${{ github.event.inputs.deploymentId }}
+
+      - name: Report Status - Success
+        shell: powershell
+        run: |
+          Invoke-RestMethod -Uri "${{ secrets.BACKEND_URL }}/api/internal/deployments/${{ github.event.inputs.deploymentId }}/status" -Method Patch -Headers @{Authorization="Bearer ${{ secrets.MINIPAAS_WORKER_TOKEN }}"} -Body (@{status="success"; imageTag="${{ github.event.inputs.deploymentId }}"} | ConvertTo-Json) -ContentType "application/json"
