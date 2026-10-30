@@ -1,23 +1,27 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import api from '../services/api';
-import type { Application, Deployment } from '../types';
-import { Rocket, ArrowLeft, GitBranch, Globe } from 'lucide-react';
+import type { Application, Deployment, HealthCheck } from '../types';
+import { Rocket, ArrowLeft, GitBranch, Globe, RotateCcw, Activity } from 'lucide-react';
 
 export const ApplicationDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [app, setApp] = useState<Application | null>(null);
   const [deployments, setDeployments] = useState<Deployment[]>([]);
+  const [health, setHealth] = useState<HealthCheck | null>(null);
   const [loading, setLoading] = useState(true);
+  const [rollbackLoading, setRollbackLoading] = useState<string | null>(null);
 
   const fetchData = async () => {
     try {
-      const [appRes, depRes] = await Promise.all([
+      const [appRes, depRes, healthRes] = await Promise.all([
         api.get(`/api/applications/${id}`),
         api.get(`/api/deployments?applicationId=${id}`),
+        api.get(`/api/monitoring/applications/${id}/health`).catch(() => ({ data: null })),
       ]);
       setApp(appRes.data);
       setDeployments(depRes.data);
+      setHealth(healthRes.data);
     } catch (err) {
       console.error('Failed to load application details', err);
     } finally {
@@ -27,6 +31,8 @@ export const ApplicationDetail: React.FC = () => {
 
   useEffect(() => {
     fetchData();
+    const interval = setInterval(fetchData, 10000);
+    return () => clearInterval(interval);
   }, [id]);
 
   const handleDeploy = async () => {
@@ -38,6 +44,38 @@ export const ApplicationDetail: React.FC = () => {
     } catch (err: any) {
       alert(err.response?.data?.error || 'Failed to trigger deployment');
     }
+  };
+
+  const handleRollback = async (deploymentId: string) => {
+    if (!confirm('Are you sure you want to rollback to this deployment?')) return;
+    setRollbackLoading(deploymentId);
+    try {
+      const res = await api.post(`/api/internal/applications/${id}/rollback/${deploymentId}`);
+      if (res.data.success) {
+        alert('Rollback successful!');
+      } else {
+        alert(`Rollback failed: ${res.data.message}`);
+      }
+      fetchData();
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to trigger rollback');
+    } finally {
+      setRollbackLoading(null);
+    }
+  };
+
+  const formatBytes = (bytes?: number) => {
+    if (bytes === undefined) return 'N/A';
+    const mb = bytes / (1024 * 1024);
+    return `${mb.toFixed(1)} MB`;
+  };
+
+  const formatUptime = (seconds?: number) => {
+    if (seconds === undefined) return 'N/A';
+    const mins = Math.floor(seconds / 60);
+    const hrs = Math.floor(mins / 60);
+    if (hrs > 0) return `${hrs}h ${mins % 60}m`;
+    return `${mins}m ${seconds % 60}s`;
   };
 
   if (loading) return <div className="text-gray-400">Loading application...</div>;
@@ -92,6 +130,40 @@ export const ApplicationDetail: React.FC = () => {
         </div>
       </div>
 
+      <div className="bg-gray-900 border border-gray-800 p-6 rounded-lg space-y-4">
+        <h2 className="text-lg font-medium text-white flex items-center space-x-2">
+          <Activity className="w-5 h-5 text-purple-400" />
+          <span>Container Metrics & Health</span>
+        </h2>
+
+        {health ? (
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
+              <p className="text-xs text-gray-500">Status</p>
+              <p className="text-base font-bold mt-1 text-white capitalize">{health.status}</p>
+            </div>
+            <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
+              <p className="text-xs text-gray-500">CPU Usage</p>
+              <p className="text-base font-bold mt-1 text-white">
+                {health.cpuUsage !== undefined ? `${health.cpuUsage.toFixed(2)}%` : 'N/A'}
+              </p>
+            </div>
+            <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
+              <p className="text-xs text-gray-500">Memory</p>
+              <p className="text-base font-bold mt-1 text-white">
+                {formatBytes(health.memoryUsage)} / {formatBytes(health.memoryLimit)}
+              </p>
+            </div>
+            <div className="bg-gray-950 p-4 rounded-lg border border-gray-800">
+              <p className="text-xs text-gray-500">Uptime</p>
+              <p className="text-base font-bold mt-1 text-white">{formatUptime(health.uptime)}</p>
+            </div>
+          </div>
+        ) : (
+          <p className="text-sm text-gray-500">No active health metrics available.</p>
+        )}
+      </div>
+
       <div className="space-y-4">
         <h2 className="text-lg font-medium text-white">Deployment History</h2>
         <div className="bg-gray-900 border border-gray-800 rounded-lg overflow-hidden">
@@ -102,12 +174,20 @@ export const ApplicationDetail: React.FC = () => {
                 <th className="p-4 font-medium">Status</th>
                 <th className="p-4 font-medium">Image Tag</th>
                 <th className="p-4 font-medium">Created At</th>
+                <th className="p-4 font-medium text-right">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-gray-800">
               {deployments.map((d) => (
                 <tr key={d._id} className="hover:bg-gray-800/50">
-                  <td className="p-4 font-mono text-xs text-gray-300">{d._id}</td>
+                  <td className="p-4 font-mono text-xs text-gray-300">
+                    {d._id}
+                    {d.isRollback && (
+                      <span className="ml-2 text-[10px] bg-purple-500/10 text-purple-400 border border-purple-500/20 px-1.5 py-0.5 rounded">
+                        Rollback
+                      </span>
+                    )}
+                  </td>
                   <td className="p-4">
                     <span className={`px-2 py-0.5 text-xs rounded-full font-medium ${
                       d.status === 'success' ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20' :
@@ -119,11 +199,23 @@ export const ApplicationDetail: React.FC = () => {
                   </td>
                   <td className="p-4 font-mono text-xs text-gray-400">{d.imageTag || 'N/A'}</td>
                   <td className="p-4 text-gray-400">{new Date(d.createdAt).toLocaleString()}</td>
+                  <td className="p-4 text-right">
+                    {d.status === 'success' && d.imageTag && (
+                      <button
+                        onClick={() => handleRollback(d._id)}
+                        disabled={rollbackLoading === d._id}
+                        className="bg-gray-800 hover:bg-gray-700 text-gray-300 px-3 py-1 rounded text-xs font-medium flex items-center space-x-1 ml-auto transition-colors disabled:opacity-50"
+                      >
+                        <RotateCcw className="w-3 h-3" />
+                        <span>{rollbackLoading === d._id ? 'Rolling back...' : 'Rollback'}</span>
+                      </button>
+                    )}
+                  </td>
                 </tr>
               ))}
               {deployments.length === 0 && (
                 <tr>
-                  <td colSpan={4} className="p-8 text-center text-gray-500">
+                  <td colSpan={5} className="p-8 text-center text-gray-500">
                     No deployments recorded yet.
                   </td>
                 </tr>

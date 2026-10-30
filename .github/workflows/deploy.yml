@@ -56,3 +56,16 @@ jobs:
         shell: powershell
         run: |
           Invoke-RestMethod -Uri "${{ secrets.BACKEND_URL }}/api/internal/deployments/${{ github.event.inputs.deploymentId }}/status" -Method Patch -Headers @{Authorization="Bearer ${{ secrets.MINIPAAS_WORKER_TOKEN }}"} -Body (@{status="success"; imageTag="${{ github.event.inputs.deploymentId }}"} | ConvertTo-Json) -ContentType "application/json"
+          Invoke-RestMethod -Uri "${{ secrets.BACKEND_URL }}/api/internal/deployments/${{ github.event.inputs.deploymentId }}/logs" -Method Post -Headers @{Authorization="Bearer ${{ secrets.MINIPAAS_WORKER_TOKEN }}"} -Body (@{level="info"; message="Container started successfully and listening on port 8080."} | ConvertTo-Json) -ContentType "application/json"
+
+      - name: Report Status - Failure
+        if: failure()
+        shell: powershell
+        run: |
+          $errMsg = "Deployment failed during checkout, docker build, or container startup. Please verify repository URL, branch, and Dockerfile."
+          try {
+            Invoke-RestMethod -Uri "${{ secrets.BACKEND_URL }}/api/internal/deployments/${{ github.event.inputs.deploymentId }}/status" -Method Patch -Headers @{Authorization="Bearer ${{ secrets.MINIPAAS_WORKER_TOKEN }}"} -Body (@{status="failed"; errorMessage=$errMsg} | ConvertTo-Json) -ContentType "application/json"
+            Invoke-RestMethod -Uri "${{ secrets.BACKEND_URL }}/api/internal/deployments/${{ github.event.inputs.deploymentId }}/logs" -Method Post -Headers @{Authorization="Bearer ${{ secrets.MINIPAAS_WORKER_TOKEN }}"} -Body (@{level="error"; message=$errMsg} | ConvertTo-Json) -ContentType "application/json"
+          } catch {
+            Write-Host "Failed to report failure status to backend: $_"
+          }

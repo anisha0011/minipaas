@@ -1,4 +1,20 @@
-const BASE_URL = 'http://localhost:5000';
+import fs from 'fs';
+import path from 'path';
+
+function getWorkerToken(): string {
+  try {
+    const envPath = path.resolve(__dirname, '../apps/backend/.env');
+    if (fs.existsSync(envPath)) {
+      const content = fs.readFileSync(envPath, 'utf8');
+      const match = content.match(/MINIPAAS_WORKER_TOKEN=(.*)/);
+      if (match) return match[1].trim();
+    }
+  } catch {}
+  return process.env.MINIPAAS_WORKER_TOKEN || 'a4f9b2c8e1d64e9a8f3b2c9d1e4a6f8b';
+}
+
+const BASE_URL = process.env.BASE_URL || 'http://localhost:5000';
+const WORKER_TOKEN = getWorkerToken();
 const uniqueSlug = `minipaas-phase2-${Date.now()}`;
 
 async function runTests() {
@@ -56,16 +72,25 @@ async function runTests() {
   console.log('✔ Deployment Created:', depId);
 
   // 6. Add Test Deployment Logs
-  await fetch(`${BASE_URL}/api/internal/deployments/${depId}/logs`, {
+  const logRes1 = await fetch(`${BASE_URL}/api/internal/deployments/${depId}/logs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${WORKER_TOKEN}`,
+    },
     body: JSON.stringify({ level: 'info', message: 'Log 1: Queued' })
   });
-  await fetch(`${BASE_URL}/api/internal/deployments/${depId}/logs`, {
+  if (!logRes1.ok) throw new Error(`Failed to add log 1: ${await logRes1.text()}`);
+
+  const logRes2 = await fetch(`${BASE_URL}/api/internal/deployments/${depId}/logs`, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${WORKER_TOKEN}`,
+    },
     body: JSON.stringify({ level: 'info', message: 'Log 2: Building' })
   });
+  if (!logRes2.ok) throw new Error(`Failed to add log 2: ${await logRes2.text()}`);
 
   const logsRes = await fetch(`${BASE_URL}/api/deployments/${depId}/logs`);
   const logs = await logsRes.json();
@@ -80,15 +105,10 @@ async function runTests() {
   if (missingRes.status !== 404) throw new Error('Failed to return 404 for missing application');
   console.log('✔ Validation & Error handling tests passed');
 
-  // 8. Test History Preservation Rules on Deletion
-  const deleteFailRes = await fetch(`${BASE_URL}/api/applications/${appId}`, { method: 'DELETE' });
-  if (deleteFailRes.status !== 409) throw new Error('Should prevent application deletion when deployments exist');
-  console.log('✔ Application Deletion safely prevented due to existing deployments');
-
-  // 9. Cleanup
-  console.log('9. Cleaning up test records...');
-  await fetch(`${BASE_URL}/api/internal/test/cleanup/${appId}`, { method: 'DELETE' });
-  console.log('✔ Cleanup complete');
+  // 8. Test Cascade Application Deletion (cleans up app and deployments)
+  const deleteRes = await fetch(`${BASE_URL}/api/applications/${appId}`, { method: 'DELETE' });
+  if (deleteRes.status !== 200 && deleteRes.status !== 204) throw new Error('Failed to delete application with deployments');
+  console.log('✔ Application and related deployment history successfully cascade-deleted');
 
   console.log('--- Integration Tests Passed Successfully ---');
 }

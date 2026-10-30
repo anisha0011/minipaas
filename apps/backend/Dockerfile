@@ -14,6 +14,9 @@ FROM node:24-alpine AS runner
 
 WORKDIR /app
 
+# Install Docker CLI
+RUN apk add --no-cache docker-cli
+
 ENV NODE_ENV=production
 ENV PORT=5000
 

@@ -2,6 +2,12 @@ import { Request, Response } from 'express';
 import { Application } from '../models/Application';
 import { Deployment } from '../models/Deployment';
 import { DeploymentLog } from '../models/DeploymentLog';
+import { HealthCheck } from '../models/HealthCheck';
+import { triggerDeploymentWorkflow } from '../services/githubService';
+import { exec } from 'child_process';
+import { promisify } from 'util';
+
+const execAsync = promisify(exec);
 
 // Application Controllers
 export const listApplications = async (req: Request, res: Response) => {
@@ -46,12 +52,34 @@ export const updateApplication = async (req: Request, res: Response) => {
 
 export const deleteApplication = async (req: Request, res: Response) => {
   try {
-    const deployments = await Deployment.findOne({ applicationId: req.params.id });
-    if (deployments) return res.status(409).json({ error: 'Cannot delete application with existing deployments' });
-    const app = await Application.findByIdAndDelete(req.params.id);
+    const appId = req.params.id;
+
+    // Stop and remove running container if any
+    const containerName = `app-${appId}`;
+    try {
+      await execAsync(`docker rm -f "${containerName}"`);
+    } catch {
+      // container might not exist or be running, ignore
+    }
+
+    // Find all deployments for this application to clean up their logs first
+    const deployments = await Deployment.find({ applicationId: appId });
+    const deploymentIds = deployments.map(d => d._id);
+
+    // Delete associated logs, deployments, and health checks
+    if (deploymentIds.length > 0) {
+      await DeploymentLog.deleteMany({ deploymentId: { $in: deploymentIds } });
+      await Deployment.deleteMany({ applicationId: appId });
+    }
+    await HealthCheck.deleteMany({ applicationId: appId });
+
+    // Delete the application itself
+    const app = await Application.findByIdAndDelete(appId);
     if (!app) return res.status(404).json({ error: 'Application not found' });
-    res.status(204).send();
+
+    res.status(200).json({ success: true, message: 'Application and its history deleted successfully' });
   } catch (error) {
+    console.error('Delete application error:', error);
     res.status(400).json({ error: 'Deletion failed' });
   }
 };
@@ -85,8 +113,25 @@ export const getDeployment = async (req: Request, res: Response) => {
 
 export const createDeployment = async (req: Request, res: Response) => {
   try {
+    const app = await Application.findById(req.params.id);
+    if (!app) return res.status(404).json({ error: 'Application not found' });
+
     const deployment = new Deployment({ ...req.body, applicationId: req.params.id });
     await deployment.save();
+
+    // Trigger GitHub Workflow
+    try {
+      await triggerDeploymentWorkflow({
+        deploymentId: deployment._id as unknown as string,
+        applicationId: req.params.id as string,
+        repositoryUrl: app.repositoryUrl || '',
+        branch: app.branch,
+      });
+    } catch (githubError: any) {
+      const detail = githubError.response?.data ? JSON.stringify(githubError.response.data) : githubError.message;
+      console.error(`Failed to trigger GitHub workflow: ${detail}`);
+    }
+
     res.status(201).json(deployment);
   } catch (error) {
     res.status(400).json({ error: 'Failed to create deployment' });

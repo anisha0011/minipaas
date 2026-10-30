@@ -23,6 +23,8 @@ export interface Deployment {
   startedAt?: string;
   finishedAt?: string;
   errorMessage?: string;
+  isRollback?: boolean;
+  rolledBackFrom?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -41,4 +43,19 @@ export interface Stats {
   totalDeployments: number;
   successfulDeployments: number;
   failedDeployments: number;
+}
+
+export interface HealthCheck {
+  _id: string;
+  applicationId: string;
+  deploymentId?: string;
+  containerName: string;
+  status: 'running' | 'stopped' | 'restarting' | 'unhealthy' | 'exited' | 'unknown';
+  healthStatus: 'healthy' | 'unhealthy' | 'unknown';
+  healthMessage?: string;
+  cpuUsage?: number;
+  memoryUsage?: number;
+  memoryLimit?: number;
+  uptime?: number;
+  checkedAt: string;
 }
