@@ -1,0 +1,47 @@
+name: Self Hosted Runner Test
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  runner-test:
+    runs-on: [self-hosted, Windows, X64, minipaas]
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Verify Runner Environment
+        shell: powershell
+        run: |
+          Write-Host "MiniPaaS Self Hosted Runner Connected"
+          Write-Host "Computer: $env:COMPUTERNAME"
+          Write-Host "User: $env:USERNAME"
+          Write-Host "OS: $([System.Environment]::OSVersion.VersionString)"
+
+      - name: Verify Git
+        shell: powershell
+        run: git --version
+
+      - name: Verify Node.js
+        shell: powershell
+        run: node --version
+
+      - name: Verify npm
+        shell: powershell
+        run: npm --version
+
+      - name: Verify Docker
+        shell: powershell
+        run: docker --version
+
+      - name: Verify Docker Compose
+        shell: powershell
+        run: docker compose version
+
+      - name: Runner Test Completed
+        shell: powershell
+        run: Write-Host "All runner checks completed successfully."
